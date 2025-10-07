@@ -39,3 +39,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# generated content
+public/audio/*.mp3
+
+# AI files
+WARP.md
