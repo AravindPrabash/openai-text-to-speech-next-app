@@ -64,7 +64,7 @@ export default function Home() {
       <main className="w-full max-w-3xl bg-white/90 backdrop-blur rounded-3xl shadow-xl border border-orange-200 overflow-hidden">
         <div className="bg-gradient-to-r from-sky-500 via-orange-400 to-amber-400 text-white px-8 py-6">
           <h1 className="text-3xl font-black tracking-tight">
-            CuriousKid Science Voice Lab
+            TTS Voice Lab
           </h1>
           <p className="mt-2 text-sm md:text-base">
             Paste your script, pick a voice, and get a playful MP3 narration for your next episode.
