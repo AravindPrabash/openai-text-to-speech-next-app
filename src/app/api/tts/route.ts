@@ -1,46 +1,130 @@
 import { NextResponse } from "next/server";
-import OpenAI from "openai";
 import path from "path";
 import { promises as fs } from "fs";
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+import { parseScript, generateSrt, TimelineEntry } from "@/lib/parser";
+import { generateGeminiSpeech } from "@/lib/gemini-tts";
+import { getAudioDuration, stitchMasterAudio, StemTimingInfo } from "@/lib/audio-stitcher";
 
 export const runtime = "nodejs";
 
-interface TTSRequestBody {
-  text?: string;
-  voice?: string;
+interface RequestBody {
+  script?: string;
+  projectId?: string;
 }
 
 export async function POST(req: Request) {
-  if (!process.env.OPENAI_API_KEY) {
-    return NextResponse.json({ error: "Missing OpenAI API key." }, { status: 500 });
+  if (!process.env.GEMINI_API_KEY) {
+    return NextResponse.json(
+      { error: "GEMINI_API_KEY environment variable is missing." },
+      { status: 500 }
+    );
   }
 
   try {
-    const { text, voice }: TTSRequestBody = await req.json();
+    const { script, projectId: customProjectId }: RequestBody = await req.json();
 
-    if (!text || !text.trim()) {
-      return NextResponse.json({ error: "Text is required." }, { status: 400 });
+    if (!script || !script.trim()) {
+      return NextResponse.json(
+        { error: "Script text is required." },
+        { status: 400 }
+      );
     }
 
-    const response = await openai.audio.speech.create({
-      model: "gpt-4o-mini-tts",
-      voice: voice || "alloy",
-      input: text,
+    const segments = parseScript(script);
+    if (segments.length === 0) {
+      return NextResponse.json(
+        { error: "No valid dialogue lines found in script." },
+        { status: 400 }
+      );
+    }
+
+    const projectId = customProjectId || `project-${Date.now()}`;
+    const publicAudioDir = path.join(process.cwd(), "public", "audio", projectId);
+    const stemsDir = path.join(publicAudioDir, "stems");
+
+    await fs.mkdir(stemsDir, { recursive: true });
+
+    const timeline: TimelineEntry[] = [];
+    const stemTimingList: StemTimingInfo[] = [];
+    let currentTime = 0;
+
+    // Generate stems sequentially to prevent rate limiting & maintain order
+    for (const segment of segments) {
+      const stemFileName = `${String(segment.index).padStart(2, "0")}_${segment.speaker.toLowerCase()}.wav`;
+      const stemFilePath = path.join(stemsDir, stemFileName);
+
+      // Synthesize with Gemini Audio
+      const audioResult = await generateGeminiSpeech({
+        speaker: segment.speaker,
+        text: segment.text,
+      });
+
+      await fs.writeFile(stemFilePath, audioResult.buffer);
+
+      // Calculate audio duration
+      const duration = await getAudioDuration(stemFilePath);
+      const startTime = currentTime;
+      const endTime = startTime + duration;
+      const stemUrl = `/audio/${projectId}/stems/${stemFileName}`;
+
+      timeline.push({
+        index: segment.index,
+        speaker: segment.speaker,
+        text: segment.text,
+        startTime,
+        endTime,
+        duration,
+        pauseAfterMs: segment.pauseAfterMs,
+        stemUrl,
+      });
+
+      stemTimingList.push({
+        filePath: stemFilePath,
+        pauseAfterMs: segment.pauseAfterMs,
+      });
+
+      currentTime = endTime + segment.pauseAfterMs / 1000;
+    }
+
+    // Stitch master MP3 with pauses
+    const masterFileName = "master.mp3";
+    const masterFilePath = path.join(publicAudioDir, masterFileName);
+    await stitchMasterAudio(stemTimingList, masterFilePath, publicAudioDir);
+
+    // Generate timeline.json
+    const timelineJsonPath = path.join(publicAudioDir, "timeline.json");
+    await fs.writeFile(
+      timelineJsonPath,
+      JSON.stringify(
+        {
+          projectId,
+          totalDuration: currentTime,
+          segmentsCount: timeline.length,
+          timeline,
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    // Generate subtitles.srt
+    const srtContent = generateSrt(timeline);
+    const srtFilePath = path.join(publicAudioDir, "subtitles.srt");
+    await fs.writeFile(srtFilePath, srtContent, "utf8");
+
+    return NextResponse.json({
+      success: true,
+      projectId,
+      totalDuration: currentTime,
+      masterAudioUrl: `/audio/${projectId}/${masterFileName}`,
+      timelineUrl: `/audio/${projectId}/timeline.json`,
+      subtitlesUrl: `/audio/${projectId}/subtitles.srt`,
+      timeline,
     });
-
-    const buffer = Buffer.from(await response.arrayBuffer());
-    const audioDir = path.join(process.cwd(), "public", "audio");
-    const fileName = `tts-${Date.now()}.mp3`;
-    const filePath = path.join(audioDir, fileName);
-
-    await fs.mkdir(audioDir, { recursive: true });
-    await fs.writeFile(filePath, buffer);
-
-    return NextResponse.json({ url: `/audio/${fileName}` });
-  } catch (error) {
-    console.error("TTS generation failed", error);
-    return NextResponse.json({ error: "Failed to generate speech." }, { status: 500 });
+  } catch (error: unknown) {
+    console.error("Multi-speaker dialogue pipeline failed:", error);
+    const message = error instanceof Error ? error.message : "Failed to generate dialogue audio.";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
