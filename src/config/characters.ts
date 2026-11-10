@@ -5,7 +5,7 @@ export interface CharacterProfile {
   role: string;
   voiceName: string; // Gemini prebuilt voice name
   deliveryInstruction: string;
-  useAcousticPromptPrimer: boolean; // Priming prompt to induce deep acting register
+  useAcousticPromptPrimer: boolean; // Priming prompt to anchor acoustic persona and timbre
   audioFilters?: string[];
   color: {
     badge: string;
@@ -18,12 +18,12 @@ export const CHARACTERS: Record<CharacterKey, CharacterProfile> = {
   CORVUS: {
     name: "Corvus the Raven",
     role: "Cynical Noir Investigator",
-    voiceName: "Charon", // The original voice you loved
+    voiceName: "Charon",
     deliveryInstruction:
       "A cynical, intelligent noir detective. Low pitch, gravelly, slow and deliberate cadence, unbothered.",
-    useAcousticPromptPrimer: true, // Uses acoustic priming to lock in the deep, compact noir baritone
+    useAcousticPromptPrimer: true, // Priming prompt anchors his deep, unhurried, compact noir baritone
     audioFilters: [
-      "equalizer=f=120:width_type=o:w=1.2:g=4", // Adds that warm vintage condenser mic presence
+      "equalizer=f=120:width_type=o:w=1.2:g=4", // Warm vintage condenser mic body
       "volume=1.5dB",
     ],
     color: {
@@ -37,11 +37,12 @@ export const CHARACTERS: Record<CharacterKey, CharacterProfile> = {
     role: "Eager / Defensive Foil",
     voiceName: "Puck",
     deliveryInstruction:
-      "A naive, eager, slightly breathless sidekick trying to justify his mistake. Expressive, warmer tone.",
-    useAcousticPromptPrimer: false,
+      "A naive, eager, slightly breathless sidekick trying to justify his mistake. Expressive, warmer tone, higher pitch.",
+    useAcousticPromptPrimer: true, // Priming prompt anchors his eager, defensive, breathless tenor across every line
     audioFilters: [
-      "equalizer=f=2500:width_type=o:w=1.5:g=2",
+      "equalizer=f=2500:width_type=o:w=1.5:g=2.5", // Dialogue presence & crisp intelligibility
       "highpass=f=90",
+      "volume=1.0dB",
     ],
     color: {
       badge: "bg-amber-950/70 text-amber-300 border-amber-800/80",

@@ -105,7 +105,7 @@ async function detectDialogueCutPoint(
         {
           parts: [
             {
-              text: `Analyze the audio waveform. Locate the exact start timestamp in seconds where the speaker says the line beginning with: "${targetWords}". Output ONLY a JSON object: {"dialogueStartSec": number}`,
+              text: `Analyze the speech in this audio waveform. Find the exact start timestamp in seconds where the speaker says the line beginning with: "${targetWords}". Respond with ONLY a JSON object: {"dialogueStartSec": number}`,
             },
             {
               inlineData: {
@@ -123,8 +123,8 @@ async function detectDialogueCutPoint(
 
     const parsed = JSON.parse(res.text || "{}");
     if (typeof parsed.dialogueStartSec === "number" && parsed.dialogueStartSec > 0) {
-      // Back up slightly (0.1s) to ensure the very first plosive isn't clipped
-      return Math.max(0, parsed.dialogueStartSec - 0.1);
+      // Back up slightly (0.08s) to ensure the very first plosive/consonant isn't clipped
+      return Math.max(0, parsed.dialogueStartSec - 0.08);
     }
   } catch (err) {
     console.warn("Failed to find exact cut point with Gemini:", err);
@@ -135,10 +135,9 @@ async function detectDialogueCutPoint(
 /**
  * Generate speech audio using Gemini Audio TTS.
  *
- * For CORVUS:
- * Uses acoustic prompt priming (the exact instruction text from the first run that triggered
- * Gemini's deep, low-register, compact noir baritone), and then automatically slices out
- * the preamble so only the clean, deep dialogue take remains!
+ * Both CORVUS and BARNABY use acoustic prompt priming to anchor their specific vocal acting
+ * persona (register, cadence, emotion) across every single line in an episode, and then
+ * the priming preamble is cleanly trimmed so only the character's line remains.
  */
 export async function generateGeminiSpeech({
   speaker,
@@ -162,8 +161,7 @@ export async function generateGeminiSpeech({
   // Construct prompt text
   let synthesisPrompt = cleanedText;
   if (profile.useAcousticPromptPrimer) {
-    // This exact acoustic primer is what provoked the deep, gravelly noir performance in the initial takes!
-    synthesisPrompt = `Read the following line aloud as Corvus the Raven (Cynical Noir Investigator). Tone and delivery: A cynical, intelligent noir detective. Low pitch, gravelly, slow and deliberate cadence, unbothered.\n\nTranscript:\n"${cleanedText}"`;
+    synthesisPrompt = `Read the following line aloud as ${profile.name} (${profile.role}). Tone and delivery: ${profile.deliveryInstruction}\n\nTranscript:\n"${cleanedText}"`;
   }
 
   const models = [
