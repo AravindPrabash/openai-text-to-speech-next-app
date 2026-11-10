@@ -18,6 +18,18 @@ interface RequestBody {
   projectId?: string;
 }
 
+function getFormattedProjectId(): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const YYYY = now.getFullYear();
+  const MM = pad(now.getMonth() + 1);
+  const DD = pad(now.getDate());
+  const hh = pad(now.getHours());
+  const mm = pad(now.getMinutes());
+  const ss = pad(now.getSeconds());
+  return `project_${YYYY}-${MM}-${DD}_${hh}-${mm}-${ss}`;
+}
+
 export async function POST(req: Request) {
   if (!process.env.GEMINI_API_KEY) {
     return NextResponse.json(
@@ -44,7 +56,8 @@ export async function POST(req: Request) {
       );
     }
 
-    const projectId = customProjectId || `project-${Date.now()}`;
+    // Format folder with human-readable date and time: project_YYYY-MM-DD_HH-mm-ss
+    const projectId = customProjectId || getFormattedProjectId();
     const publicAudioDir = path.join(process.cwd(), "public", "audio", projectId);
     const stemsDir = path.join(publicAudioDir, "stems");
 
@@ -54,7 +67,7 @@ export async function POST(req: Request) {
     const stemTimingList: StemTimingInfo[] = [];
     let currentTime = 0;
 
-    // Generate stems sequentially to prevent rate limiting & maintain order
+    // Generate stems sequentially
     for (const segment of segments) {
       const charProfile = CHARACTERS[segment.speaker] || CHARACTERS.NARRATOR;
       const rawStemFileName = `raw_${String(segment.index).padStart(2, "0")}_${segment.speaker.toLowerCase()}.wav`;
@@ -71,14 +84,14 @@ export async function POST(req: Request) {
 
       await fs.writeFile(rawStemFilePath, audioResult.buffer);
 
-      // Apply character DSP profile (pitch lowering, warmth EQ) for deterministic timbre
+      // Apply character DSP profile if defined
       if (charProfile.audioFilters && charProfile.audioFilters.length > 0) {
         await applyStemFilters(
           rawStemFilePath,
           finalStemFilePath,
           charProfile.audioFilters
         );
-        // Clean up raw stem
+        // Remove temporary raw duplicate
         try {
           await fs.unlink(rawStemFilePath);
         } catch {
@@ -113,7 +126,7 @@ export async function POST(req: Request) {
       currentTime = endTime + segment.pauseAfterMs / 1000;
     }
 
-    // Stitch master MP3 with pauses
+    // Stitch master MP3 (temporary silence chunks are deleted automatically inside)
     const masterFileName = "master.mp3";
     const masterFilePath = path.join(publicAudioDir, masterFileName);
     await stitchMasterAudio(stemTimingList, masterFilePath, publicAudioDir);
@@ -125,8 +138,10 @@ export async function POST(req: Request) {
       JSON.stringify(
         {
           projectId,
+          createdAt: new Date().toISOString(),
           totalDuration: currentTime,
           segmentsCount: timeline.length,
+          script,
           timeline,
         },
         null,
@@ -148,6 +163,7 @@ export async function POST(req: Request) {
       timelineUrl: `/audio/${projectId}/timeline.json`,
       subtitlesUrl: `/audio/${projectId}/subtitles.srt`,
       timeline,
+      script,
     });
   } catch (error: unknown) {
     console.error("Multi-speaker dialogue pipeline failed:", error);

@@ -107,7 +107,6 @@ export async function applyStemFilters(
   filters: string[]
 ): Promise<void> {
   if (!filters || filters.length === 0) {
-    // If no filters needed, copy or leave as is
     if (inputPath !== outputPath) {
       await fs.copyFile(inputPath, outputPath);
     }
@@ -146,6 +145,7 @@ export async function generateSilenceWav(
 
 /**
  * Concatenates stems and silent pauses into a single master MP3 file.
+ * Automatically cleans up any temporary silence audio chunks after completion.
  */
 export async function stitchMasterAudio(
   items: StemTimingInfo[],
@@ -158,19 +158,31 @@ export async function stitchMasterAudio(
 
   const concatListPath = path.join(workDir, `concat-${Date.now()}.txt`);
   const lines: string[] = [];
+  const tempFilesToClean: string[] = [concatListPath];
 
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
     lines.push(`file '${item.filePath.replace(/'/g, "'\\''")}'`);
 
     if (item.pauseAfterMs > 0 && i < items.length) {
-      const silencePath = path.join(workDir, `silence-${i}-${item.pauseAfterMs}ms.wav`);
+      const silencePath = path.join(workDir, `temp-silence-${i}-${Date.now()}.wav`);
       await generateSilenceWav(silencePath, item.pauseAfterMs);
       lines.push(`file '${silencePath.replace(/'/g, "'\\''")}'`);
+      tempFilesToClean.push(silencePath);
     }
   }
 
   await fs.writeFile(concatListPath, lines.join("\n"), "utf8");
+
+  const cleanup = async () => {
+    for (const f of tempFilesToClean) {
+      try {
+        await fs.unlink(f);
+      } catch {
+        // ignore
+      }
+    }
+  };
 
   return new Promise((resolve, reject) => {
     ffmpeg()
@@ -180,19 +192,11 @@ export async function stitchMasterAudio(
       .audioBitrate("192k")
       .output(outputMasterPath)
       .on("end", async () => {
-        try {
-          await fs.unlink(concatListPath);
-        } catch {
-          // ignore
-        }
+        await cleanup();
         resolve();
       })
       .on("error", async (err) => {
-        try {
-          await fs.unlink(concatListPath);
-        } catch {
-          // ignore
-        }
+        await cleanup();
         reject(err);
       })
       .run();

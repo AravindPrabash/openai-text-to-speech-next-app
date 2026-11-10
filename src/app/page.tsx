@@ -22,6 +22,20 @@ interface GenerationResult {
   timelineUrl: string;
   subtitlesUrl: string;
   timeline: TimelineEntry[];
+  script?: string;
+}
+
+interface ProjectHistoryItem {
+  projectId: string;
+  formattedDate: string;
+  totalDuration: number;
+  segmentsCount: number;
+  previewText: string;
+  script?: string;
+  masterAudioUrl: string;
+  timelineUrl: string;
+  subtitlesUrl: string;
+  timeline: TimelineEntry[];
 }
 
 export default function Home() {
@@ -30,6 +44,10 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<GenerationResult | null>(null);
 
+  // History state
+  const [history, setHistory] = useState<ProjectHistoryItem[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
   // Audio playback state for individual stems
   const [activeStemUrl, setActiveStemUrl] = useState<string | null>(null);
   const [isStemPlaying, setIsStemPlaying] = useState(false);
@@ -37,6 +55,27 @@ export default function Home() {
 
   const masterAudioRef = useRef<HTMLAudioElement | null>(null);
   const stemAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Load project history on mount (without auto-selecting)
+  const fetchHistory = async () => {
+    setIsLoadingHistory(true);
+    try {
+      const res = await fetch("/api/history");
+      if (res.ok) {
+        const data = await res.json();
+        setHistory(data.projects || []);
+      }
+    } catch (err) {
+      console.warn("Failed to fetch history:", err);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Sync stem audio player events
   useEffect(() => {
@@ -100,6 +139,8 @@ export default function Home() {
 
       setResult(data);
       setActiveStemUrl(null);
+      // Refresh history list so the new session shows up immediately
+      fetchHistory();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
     } finally {
@@ -107,10 +148,37 @@ export default function Home() {
     }
   };
 
+  const toggleHistoryItem = (item: ProjectHistoryItem) => {
+    stopStem();
+
+    // If clicking the currently selected project, deselect it
+    if (result?.projectId === item.projectId) {
+      setResult(null);
+      if (masterAudioRef.current) {
+        masterAudioRef.current.pause();
+      }
+      return;
+    }
+
+    // Otherwise select the clicked project and populate preview
+    setResult({
+      success: true,
+      projectId: item.projectId,
+      totalDuration: item.totalDuration,
+      masterAudioUrl: item.masterAudioUrl,
+      timelineUrl: item.timelineUrl,
+      subtitlesUrl: item.subtitlesUrl,
+      timeline: item.timeline,
+      script: item.script,
+    });
+    if (item.script) {
+      setScript(item.script);
+    }
+  };
+
   const toggleStem = (url: string) => {
     if (!stemAudioRef.current) return;
 
-    // Pause master audio if it's currently playing
     if (masterAudioRef.current && !masterAudioRef.current.paused) {
       masterAudioRef.current.pause();
     }
@@ -141,7 +209,6 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-[#090a0f] text-zinc-100 flex flex-col font-sans selection:bg-amber-500/30">
-      {/* Hidden audio element for stem previewing */}
       <audio ref={stemAudioRef} className="hidden" preload="auto" />
 
       {/* Header */}
@@ -179,8 +246,8 @@ export default function Home() {
 
       {/* Main Studio Viewport */}
       <main className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-0">
-        {/* Left Column: Script Editor & Controls (5 Cols) */}
-        <section className="lg:col-span-5 border-r border-zinc-800/80 p-6 flex flex-col gap-5 bg-zinc-950/40">
+        {/* Left Column: Script Editor & History (5 Cols) */}
+        <section className="lg:col-span-5 border-r border-zinc-800/80 p-6 flex flex-col gap-6 bg-zinc-950/40">
           <div>
             <div className="flex items-center justify-between mb-2">
               <label
@@ -197,37 +264,12 @@ export default function Home() {
               id="script-input"
               value={script}
               onChange={(e) => setScript(e.target.value)}
-              rows={16}
+              rows={14}
               disabled={isGenerating}
               className="w-full bg-[#0d0f14] border border-zinc-800 rounded-xl p-4 font-mono text-sm leading-relaxed text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500/50 transition resize-none selection:bg-amber-600/30"
               placeholder="CORVUS: The lock wasn't picked... [pause: 450ms]&#10;BARNABY: Wait, what does that mean?"
             />
           </div>
-
-          {/* Quick Syntax Cheat Sheet */}
-          <div className="bg-zinc-900/60 border border-zinc-800/70 rounded-xl p-3.5 text-xs text-zinc-400 space-y-1.5 font-mono">
-            <div className="font-sans font-semibold text-zinc-300 mb-1">
-              Script Syntax & Persona Cues
-            </div>
-            <div>
-              <span className="text-zinc-200 font-bold">CORVUS:</span> Gritty, low-register investigator baritone (Charon).
-            </div>
-            <div>
-              <span className="text-amber-300 font-bold">BARNABY:</span> Eager, naive, breathless sidekick foil (Puck).
-            </div>
-            <div>
-              <span className="text-cyan-300 font-bold">NARRATOR:</span> Measured documentary case voiceover (Fenrir).
-            </div>
-            <div>
-              <span className="text-zinc-300 font-bold">[pause: Xms]:</span> Injects surgical millisecond dramatic silence.
-            </div>
-          </div>
-
-          {error && (
-            <div className="p-3.5 rounded-xl bg-red-950/40 border border-red-800/60 text-xs text-red-300 font-mono">
-              <span className="font-bold">Error:</span> {error}
-            </div>
-          )}
 
           {/* Action button */}
           <button
@@ -262,6 +304,85 @@ export default function Home() {
               "Generate Dialogue Stems & Master Track"
             )}
           </button>
+
+          {error && (
+            <div className="p-3.5 rounded-xl bg-red-950/40 border border-red-800/60 text-xs text-red-300 font-mono">
+              <span className="font-bold">Error:</span> {error}
+            </div>
+          )}
+
+          {/* Project History Section */}
+          <div className="pt-2 border-t border-zinc-800/80 flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-400 flex items-center gap-2">
+                <svg
+                  className="w-3.5 h-3.5 text-zinc-500"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  strokeWidth="2"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                </svg>
+                Project History ({history.length})
+              </h2>
+              <button
+                onClick={fetchHistory}
+                disabled={isLoadingHistory}
+                className="text-[11px] text-zinc-500 hover:text-zinc-300 transition cursor-pointer"
+                title="Refresh project list"
+              >
+                {isLoadingHistory ? "Refreshing..." : "Refresh"}
+              </button>
+            </div>
+
+            {history.length > 0 ? (
+              <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                {history.map((item) => {
+                  const isCurrent = result?.projectId === item.projectId;
+                  return (
+                    <button
+                      key={item.projectId}
+                      onClick={() => toggleHistoryItem(item)}
+                      className={`w-full text-left p-3 rounded-xl border transition cursor-pointer flex flex-col gap-1.5 ${
+                        isCurrent
+                          ? "bg-zinc-900 border-amber-500/80 shadow-sm shadow-amber-950/30 ring-1 ring-amber-500/30"
+                          : "bg-zinc-900/30 border-zinc-800/80 hover:bg-zinc-900/70"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-mono font-semibold text-zinc-200 flex items-center gap-1.5">
+                          {isCurrent && (
+                            <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
+                          )}
+                          {item.formattedDate}
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-800 text-zinc-400">
+                            {item.totalDuration.toFixed(1)}s • {item.segmentsCount} lines
+                          </span>
+                          <span className="text-[10px] font-mono text-zinc-500">
+                            {isCurrent ? "Deselect" : "View"}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-xs text-zinc-400 italic truncate font-serif">
+                        &ldquo;{item.previewText}&rdquo;
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-xs text-zinc-600 font-mono italic p-3 text-center border border-dashed border-zinc-800 rounded-xl">
+                No past projects found.
+              </div>
+            )}
+          </div>
         </section>
 
         {/* Right Column: Timeline, Stem Player & Exports (7 Cols) */}
@@ -276,7 +397,7 @@ export default function Home() {
                       Master Track Mix
                     </span>
                     <h2 className="text-base font-bold text-zinc-100">
-                      Full Noir Cut ({result.totalDuration.toFixed(2)}s)
+                      {result.projectId.replace("project_", "")} ({result.totalDuration.toFixed(2)}s)
                     </h2>
                   </div>
                   {/* Export Buttons */}
@@ -311,7 +432,6 @@ export default function Home() {
                   className="w-full accent-amber-500 rounded-lg"
                   src={result.masterAudioUrl}
                   onPlay={() => {
-                    // Stop stem audio when master plays
                     stopStem();
                   }}
                 >
@@ -387,7 +507,6 @@ export default function Home() {
                         <div className="flex items-center justify-between gap-3 pt-2 border-t border-zinc-800/60">
                           {/* Dedicated Play / Pause / Stop Controls */}
                           <div className="flex items-center gap-2">
-                            {/* Play / Pause Button */}
                             <button
                               onClick={() => toggleStem(entry.stemUrl)}
                               className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium cursor-pointer transition ${
@@ -421,7 +540,6 @@ export default function Home() {
                               )}
                             </button>
 
-                            {/* Stop Button (visible when this stem is selected or playing) */}
                             {isSelected && (
                               <button
                                 onClick={stopStem}
