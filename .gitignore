@@ -40,8 +40,8 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# generated content
-public/audio/*.mp3
+# generated content & project outputs
+/public/audio/
 
 # AI files
 WARP.md

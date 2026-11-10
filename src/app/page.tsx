@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useRef, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { CHARACTERS, DEFAULT_SCRIPT, CharacterKey } from "@/config/characters";
 
 interface TimelineEntry {
@@ -29,10 +29,45 @@ export default function Home() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<GenerationResult | null>(null);
+
+  // Audio playback state for individual stems
   const [activeStemUrl, setActiveStemUrl] = useState<string | null>(null);
+  const [isStemPlaying, setIsStemPlaying] = useState(false);
+  const [stemProgress, setStemProgress] = useState(0);
 
   const masterAudioRef = useRef<HTMLAudioElement | null>(null);
   const stemAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Sync stem audio player events
+  useEffect(() => {
+    const audio = stemAudioRef.current;
+    if (!audio) return;
+
+    const onPlay = () => setIsStemPlaying(true);
+    const onPause = () => setIsStemPlaying(false);
+    const onEnded = () => {
+      setIsStemPlaying(false);
+      setStemProgress(0);
+      setActiveStemUrl(null);
+    };
+    const onTimeUpdate = () => {
+      if (audio.duration) {
+        setStemProgress((audio.currentTime / audio.duration) * 100);
+      }
+    };
+
+    audio.addEventListener("play", onPlay);
+    audio.addEventListener("pause", onPause);
+    audio.addEventListener("ended", onEnded);
+    audio.addEventListener("timeupdate", onTimeUpdate);
+
+    return () => {
+      audio.removeEventListener("play", onPlay);
+      audio.removeEventListener("pause", onPause);
+      audio.removeEventListener("ended", onEnded);
+      audio.removeEventListener("timeupdate", onTimeUpdate);
+    };
+  }, []);
 
   const handleGenerate = async (e: FormEvent) => {
     e.preventDefault();
@@ -40,6 +75,13 @@ export default function Home() {
       setError("Please input a script before generating.");
       return;
     }
+
+    // Stop any active stem playback
+    if (stemAudioRef.current) {
+      stemAudioRef.current.pause();
+    }
+    setActiveStemUrl(null);
+    setIsStemPlaying(false);
 
     setIsGenerating(true);
     setError(null);
@@ -65,18 +107,42 @@ export default function Home() {
     }
   };
 
-  const playStem = (url: string) => {
-    setActiveStemUrl(url);
-    if (stemAudioRef.current) {
+  const toggleStem = (url: string) => {
+    if (!stemAudioRef.current) return;
+
+    // Pause master audio if it's currently playing
+    if (masterAudioRef.current && !masterAudioRef.current.paused) {
+      masterAudioRef.current.pause();
+    }
+
+    if (activeStemUrl === url) {
+      if (isStemPlaying) {
+        stemAudioRef.current.pause();
+      } else {
+        stemAudioRef.current.play().catch(() => {});
+      }
+    } else {
+      setActiveStemUrl(url);
       stemAudioRef.current.src = url;
+      stemAudioRef.current.currentTime = 0;
       stemAudioRef.current.play().catch(() => {});
     }
   };
 
+  const stopStem = () => {
+    if (stemAudioRef.current) {
+      stemAudioRef.current.pause();
+      stemAudioRef.current.currentTime = 0;
+    }
+    setIsStemPlaying(false);
+    setActiveStemUrl(null);
+    setStemProgress(0);
+  };
+
   return (
     <div className="min-h-screen bg-[#090a0f] text-zinc-100 flex flex-col font-sans selection:bg-amber-500/30">
-      {/* Hidden stem audio element */}
-      <audio ref={stemAudioRef} className="hidden" />
+      {/* Hidden audio element for stem previewing */}
+      <audio ref={stemAudioRef} className="hidden" preload="auto" />
 
       {/* Header */}
       <header className="border-b border-zinc-800/80 bg-zinc-950/70 backdrop-blur sticky top-0 z-20 px-6 py-4 flex flex-wrap items-center justify-between gap-4">
@@ -86,7 +152,10 @@ export default function Home() {
           </div>
           <div>
             <h1 className="text-lg font-bold tracking-tight text-zinc-100 flex items-center gap-2">
-              Anatomy of a Trap <span className="text-xs px-2 py-0.5 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-400 font-normal">Voiceover Studio</span>
+              Anatomy of a Trap{" "}
+              <span className="text-xs px-2 py-0.5 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-400 font-normal">
+                Voiceover Studio
+              </span>
             </h1>
             <p className="text-xs text-zinc-400">
               Multi-speaker noir dialogue pipeline powered by Gemini Audio
@@ -241,6 +310,10 @@ export default function Home() {
                   controls
                   className="w-full accent-amber-500 rounded-lg"
                   src={result.masterAudioUrl}
+                  onPlay={() => {
+                    // Stop stem audio when master plays
+                    stopStem();
+                  }}
                 >
                   Your browser does not support audio playback.
                 </audio>
@@ -260,17 +333,26 @@ export default function Home() {
                 <div className="space-y-2.5">
                   {result.timeline.map((entry) => {
                     const char = CHARACTERS[entry.speaker] || CHARACTERS.NARRATOR;
-                    const isPlayingThis = activeStemUrl === entry.stemUrl;
+                    const isSelected = activeStemUrl === entry.stemUrl;
+                    const isPlaying = isSelected && isStemPlaying;
 
                     return (
                       <div
                         key={entry.index}
-                        className={`p-4 rounded-xl border bg-zinc-900/40 hover:bg-zinc-900/80 transition ${
-                          isPlayingThis
+                        className={`p-4 rounded-xl border transition relative overflow-hidden ${
+                          isSelected
                             ? "border-amber-500/80 bg-zinc-900/90 shadow-md shadow-amber-950/20"
-                            : "border-zinc-800/80"
+                            : "border-zinc-800/80 bg-zinc-900/40 hover:bg-zinc-900/70"
                         }`}
                       >
+                        {/* Progress Bar for Active Playing Stem */}
+                        {isSelected && (
+                          <div
+                            className="absolute bottom-0 left-0 h-1 bg-amber-500 transition-all duration-100 ease-linear"
+                            style={{ width: `${stemProgress}%` }}
+                          />
+                        )}
+
                         <div className="flex items-center justify-between gap-3 mb-2">
                           <div className="flex items-center gap-2">
                             <span className="text-xs font-mono text-zinc-500 font-medium">
@@ -288,7 +370,7 @@ export default function Home() {
 
                           <div className="flex items-center gap-2">
                             <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-zinc-800 text-zinc-400">
-                              {entry.duration.toFixed(2)}s duration
+                              {entry.duration.toFixed(2)}s
                             </span>
                             {entry.pauseAfterMs > 0 && (
                               <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-amber-950/50 border border-amber-800/50 text-amber-300">
@@ -303,18 +385,59 @@ export default function Home() {
                         </p>
 
                         <div className="flex items-center justify-between gap-3 pt-2 border-t border-zinc-800/60">
-                          <button
-                            onClick={() => playStem(entry.stemUrl)}
-                            className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-400 hover:text-amber-300 cursor-pointer"
-                          >
-                            <svg
-                              className="w-4 h-4 fill-current"
-                              viewBox="0 0 24 24"
+                          {/* Dedicated Play / Pause / Stop Controls */}
+                          <div className="flex items-center gap-2">
+                            {/* Play / Pause Button */}
+                            <button
+                              onClick={() => toggleStem(entry.stemUrl)}
+                              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium cursor-pointer transition ${
+                                isPlaying
+                                  ? "bg-amber-500 text-zinc-950 font-semibold"
+                                  : isSelected
+                                  ? "bg-zinc-800 text-amber-400 hover:bg-zinc-700"
+                                  : "bg-zinc-800 text-zinc-200 hover:bg-zinc-700 hover:text-white"
+                              }`}
                             >
-                              <path d="M8 5v14l11-7z" />
-                            </svg>
-                            {isPlayingThis ? "Playing Stem..." : "Preview Line"}
-                          </button>
+                              {isPlaying ? (
+                                <>
+                                  <svg
+                                    className="w-3.5 h-3.5 fill-current"
+                                    viewBox="0 0 24 24"
+                                  >
+                                    <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+                                  </svg>
+                                  Pause
+                                </>
+                              ) : (
+                                <>
+                                  <svg
+                                    className="w-3.5 h-3.5 fill-current"
+                                    viewBox="0 0 24 24"
+                                  >
+                                    <path d="M8 5v14l11-7z" />
+                                  </svg>
+                                  {isSelected ? "Resume" : "Preview Line"}
+                                </>
+                              )}
+                            </button>
+
+                            {/* Stop Button (visible when this stem is selected or playing) */}
+                            {isSelected && (
+                              <button
+                                onClick={stopStem}
+                                title="Stop and reset stem playback"
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-red-400 border border-zinc-700/80 cursor-pointer transition"
+                              >
+                                <svg
+                                  className="w-3 h-3 fill-current"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <path d="M6 6h12v12H6z" />
+                                </svg>
+                                Stop
+                              </button>
+                            )}
+                          </div>
 
                           <a
                             href={entry.stemUrl}

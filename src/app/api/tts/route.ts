@@ -3,7 +3,13 @@ import path from "path";
 import { promises as fs } from "fs";
 import { parseScript, generateSrt, TimelineEntry } from "@/lib/parser";
 import { generateGeminiSpeech } from "@/lib/gemini-tts";
-import { getAudioDuration, stitchMasterAudio, StemTimingInfo } from "@/lib/audio-stitcher";
+import {
+  getAudioDuration,
+  stitchMasterAudio,
+  applyStemFilters,
+  StemTimingInfo,
+} from "@/lib/audio-stitcher";
+import { CHARACTERS } from "@/config/characters";
 
 export const runtime = "nodejs";
 
@@ -50,22 +56,43 @@ export async function POST(req: Request) {
 
     // Generate stems sequentially to prevent rate limiting & maintain order
     for (const segment of segments) {
-      const stemFileName = `${String(segment.index).padStart(2, "0")}_${segment.speaker.toLowerCase()}.wav`;
-      const stemFilePath = path.join(stemsDir, stemFileName);
+      const charProfile = CHARACTERS[segment.speaker] || CHARACTERS.NARRATOR;
+      const rawStemFileName = `raw_${String(segment.index).padStart(2, "0")}_${segment.speaker.toLowerCase()}.wav`;
+      const rawStemFilePath = path.join(stemsDir, rawStemFileName);
 
-      // Synthesize with Gemini Audio
+      const finalStemFileName = `${String(segment.index).padStart(2, "0")}_${segment.speaker.toLowerCase()}.wav`;
+      const finalStemFilePath = path.join(stemsDir, finalStemFileName);
+
+      // Synthesize clean dialogue audio with Gemini
       const audioResult = await generateGeminiSpeech({
         speaker: segment.speaker,
         text: segment.text,
       });
 
-      await fs.writeFile(stemFilePath, audioResult.buffer);
+      await fs.writeFile(rawStemFilePath, audioResult.buffer);
 
-      // Calculate audio duration
-      const duration = await getAudioDuration(stemFilePath);
+      // Apply character DSP profile (pitch lowering, warmth EQ) for deterministic timbre
+      if (charProfile.audioFilters && charProfile.audioFilters.length > 0) {
+        await applyStemFilters(
+          rawStemFilePath,
+          finalStemFilePath,
+          charProfile.audioFilters
+        );
+        // Clean up raw stem
+        try {
+          await fs.unlink(rawStemFilePath);
+        } catch {
+          // ignore
+        }
+      } else {
+        await fs.rename(rawStemFilePath, finalStemFilePath);
+      }
+
+      // Calculate audio duration after DSP processing
+      const duration = await getAudioDuration(finalStemFilePath);
       const startTime = currentTime;
       const endTime = startTime + duration;
-      const stemUrl = `/audio/${projectId}/stems/${stemFileName}`;
+      const stemUrl = `/audio/${projectId}/stems/${finalStemFileName}`;
 
       timeline.push({
         index: segment.index,
@@ -79,7 +106,7 @@ export async function POST(req: Request) {
       });
 
       stemTimingList.push({
-        filePath: stemFilePath,
+        filePath: finalStemFilePath,
         pauseAfterMs: segment.pauseAfterMs,
       });
 
